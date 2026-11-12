@@ -50,6 +50,9 @@ if sys.platform == "win32":  # pragma: win32 cover
     _STATUS_ACCESS_DENIED: Final[int] = 0xC0000022
     _STATUS_SHARING_VIOLATION: Final[int] = 0xC0000043
     _STATUS_DELETE_PENDING: Final[int] = 0xC0000056
+    # The open raced a peer's *completed* unlink of this name: as transient as delete-pending, and
+    # like it collapsed by Win32 into ERROR_ACCESS_DENIED. Contention, not a denial.
+    _STATUS_FILE_DELETED: Final[int] = 0xC0000123
     #: How long an open waits out a STATUS_ACCESS_DENIED before treating it as a real denial: NTFS answers it for a
     #: moment while a peer's unlink tears the name down, so a bounded wait keeps a real denial failing fast (#604).
     _ACCESS_DENIED_GRACE: Final[float] = 0.5
@@ -254,7 +257,7 @@ if sys.platform == "win32":  # pragma: win32 cover
                 time.sleep(_ACCESS_DENIED_RETRY)
                 handle, status = _nt_open(path, read_only=read_only)
         if status != _STATUS_SUCCESS:
-            if status in {_STATUS_SHARING_VIOLATION, _STATUS_DELETE_PENDING}:
+            if status in {_STATUS_SHARING_VIOLATION, _STATUS_DELETE_PENDING, _STATUS_FILE_DELETED}:
                 return None
             winerror = _ntdll.RtlNtStatusToDosError(status)
             raise OSError(None, ctypes.FormatError(winerror).strip(), path, winerror)
