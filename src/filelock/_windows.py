@@ -84,6 +84,9 @@ if sys.platform == "win32":  # pragma: win32 cover
     _STATUS_OBJECT_PATH_NOT_FOUND: Final[int] = 0xC000003A
     _STATUS_SHARING_VIOLATION: Final[int] = 0xC0000043
     _STATUS_DELETE_PENDING: Final[int] = 0xC0000056
+    # An open that races a peer's completed unlink of the name: as transient as delete-pending, and likewise
+    # collapsed by Win32 into ERROR_ACCESS_DENIED.
+    _STATUS_FILE_DELETED: Final[int] = 0xC0000123
     #: Probes, 2 ms apart, for transient STATUS_ACCESS_DENIED while a peer unlinks the name (#604). A count ensures
     #: every probe runs even when the process stalls; oplock breaks use the caller's wait instead.
     _ACCESS_DENIED_PROBES: Final[int] = 250
@@ -340,8 +343,8 @@ if sys.platform == "win32":  # pragma: win32 cover
         #
         # :param oplock_wait: seconds to wait for the holder of an oplock on the file to answer its break.
         #
-        # :returns: a file descriptor owning the opened handle, or ``None`` on a sharing violation or a delete-pending
-        #     name, which the caller should treat as contention and retry.
+        # :returns: a file descriptor owning the opened handle, or ``None`` on a sharing violation, a delete-pending
+        #     name or a name whose file was just deleted, which the caller should treat as contention and retry.
         #
         # :raises BlockingIOError: if an oplock break stays unanswered for *oplock_wait* seconds.
         # :raises OSError: if the path resolves to a reparse point, or the open fails for any other reason, raised with
@@ -371,7 +374,7 @@ if sys.platform == "win32":  # pragma: win32 cover
             msg = "oplock break in progress"
             raise BlockingIOError(EWOULDBLOCK, msg, path)
         if status != _STATUS_SUCCESS:
-            if status in {_STATUS_SHARING_VIOLATION, _STATUS_DELETE_PENDING}:
+            if status in {_STATUS_SHARING_VIOLATION, _STATUS_DELETE_PENDING, _STATUS_FILE_DELETED}:
                 return None
             raise _status_error(status, path)
 

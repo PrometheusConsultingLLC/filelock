@@ -2704,6 +2704,35 @@ def test_windows_delete_pending_is_treated_as_contention(tmp_path: Path, mocker:
 
 
 @_WINDOWS_ONLY  # pragma: win32 cover
+def test_windows_file_deleted_is_treated_as_contention(tmp_path: Path, mocker: MockerFixture) -> None:
+    mocker.patch("filelock._windows._nt_open", return_value=(0, 0xC0000123), autospec=True)  # STATUS_FILE_DELETED
+    with pytest.raises(Timeout):
+        FileLock(str(tmp_path / "a"), timeout=0.2).acquire()
+
+
+@_WINDOWS_ONLY  # pragma: win32 cover
+def test_windows_file_deleted_once_is_retried_by_acquire(tmp_path: Path, mocker: MockerFixture) -> None:
+    # An open racing a peer's completed unlink of the lock file answers STATUS_FILE_DELETED, which maps to the same
+    # ERROR_ACCESS_DENIED as a denial but is gone on the next attempt. The marker skips the run off Windows, where
+    # filelock._windows does not import; the assert narrows the platform for ty.
+    assert sys.platform == "win32"
+    from filelock._windows import _nt_open as real_nt_open
+
+    statuses = [0xC0000123]
+
+    def deleted_once(path: str, *, read_only: bool, owner_only: bool) -> tuple[int, int]:
+        if statuses:
+            return 0, statuses.pop()
+        return real_nt_open(path, read_only=read_only, owner_only=owner_only)
+
+    nt_open = mocker.patch("filelock._windows._nt_open", side_effect=deleted_once, autospec=True)
+    lock = FileLock(str(tmp_path / "a"), timeout=5)
+    lock.acquire()
+    assert (lock.is_locked, nt_open.call_count) == (True, 2)
+    lock.release()
+
+
+@_WINDOWS_ONLY  # pragma: win32 cover
 def test_windows_permanent_denial_raises_without_timeout(tmp_path: Path, mocker: MockerFixture) -> None:
     mocker.patch("filelock._windows._ACCESS_DENIED_PROBES", 10)
     nt_open = mocker.patch(
